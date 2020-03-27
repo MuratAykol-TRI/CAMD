@@ -100,12 +100,29 @@ class FunctionalSimilarity:
             self.similarities[metric] = (1. + distances) ** -1
 
     def get_ranked_ids(self, metric='euclidean'):
+        """
+        Args:
+            metric (str): one of the allowed similarity metrics
+        Returns:
+            A ranked list of labels corresponding from original material df provided.
+        """
         if metric not in self.similarities:
             self.compute_metric(metric)
         return self._df.iloc[np.argsort(-np.mean(self.similarities[metric], axis=1))].index.to_list()
 
     def get_df_of_similar(self, metric='euclidean', remove_curated=True,
                           ignore_elements=None, include_elements=None, diversify=0):
+        """
+        Main method for getting a ranked version of df based on the similarity metric asked.
+        Args:
+            metric (str): one of the allowed similarity metrics
+            remove_curated (bool): whether the curated ids should be removed from returned df
+            ignore_elements (list): element strings to remove from returned df
+            include_elements (list): element strings to include in returned df
+            diversify (bool): diversification method from camd agents.
+        Returns:
+            a ranked and filter version of data frame of materials.
+        """
         _result = self._df.loc[self.get_ranked_ids(metric)]
         if remove_curated:
             _result = _result.drop(self.curated_ids)
@@ -176,6 +193,12 @@ class FunctionalSimilarity:
     def autofind_best_metric(self, n_splits=5, random_state=42, repeats=1, stop=10000, num=1001):
         """
         Method to find the best similarity metric via cross-validation.
+        Args:
+            n_splits (int): number of splits in k-fold
+            random_state (int): seed for random state
+            repeats (int): repeats the random k-fold this many times
+            stop (int): upper limit for ranking scan for AUC calculation
+            num (int): number of points considered in ranking scan for AUC calculation
         """
         self._get_metric_ranks(n_splits, random_state, repeats)
         self._top = np.linspace(0, stop, num, dtype=int)
