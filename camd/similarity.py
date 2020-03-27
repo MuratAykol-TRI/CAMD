@@ -1,0 +1,212 @@
+import numpy as np
+import matplotlib.pyplot as plt
+from sklearn.preprocessing import StandardScaler
+from sklearn.decomposition import PCA
+from sklearn.model_selection import KFold
+from scipy.spatial.distance import cdist
+from pymatgen import Composition
+from camd.agent.agents import diverse_quant
+
+
+class FunctionalSimilarity:
+    def __init__(self, df, curated_ids, scale=True, pca=None):
+        """
+        FunctionalSimilarity incorporates a "similarity" based mining approach for the
+        difficult problem of finding materials that possess a certain functionality
+        that is either difficult or expensive to quantify using experiments. The class
+        requires a data frame of features, where the index is the material label,
+        and a curated list of labels provided by the user as examples of materials
+        that possess the targeted functionality. Current distance/similarity methods available:
+            - ['dice', 'correlation', 'cityblock',  'cosine', 'mahalanobis', 'euclidean', 'tanimoto']
+        If similarity measure needs to be derived from a distance, we use:
+            - similarity = 1/(1+distance)
+        For general use cases, a filtered and ranked version of the initial data frame of materials can be accessed
+            using the get_df_of_similar method. For only getting a similarity-ranked list of material labels,
+            get_ranked_ids method can be used.
+        If there are more than a few example materials in curated list, FunctionalSimilarity provides
+            autofind_best_metric, a cross-validation type approach to automatically finding the most suitable
+            similarity metric.
+
+        Args:
+            df (pandas.DataFrame): features of materials to search over. index labels are interpreted as unique
+                ids for materials.
+            curated_ids (list): labels of materials in df that are known to deliver the target functionality.
+                (e.g. known battery electrodes, superconductors, magneticaloric materials, thermoelectrics, etc.)
+            scale (bool): whether the df should be standardized. defaults to True. Scaling df a priori can speed up
+                autofind methods.
+            pca (int): if provided, input features will be PCA transformed and this many first principal
+                components will be used in similarity / distance measurements. defaults to None, which means
+                no pca transformation will be done on data.
+        """
+        self._df = df
+        self._curated_ids = np.array(curated_ids)
+        if scale:
+            self.scaler = StandardScaler()
+            self._X = self.scaler.fit_transform(df.drop(['Composition', 'similarities'], axis=1,
+                                                        errors='ignore'))
+            self._X_scaled = True
+        else:
+            self._X = self._df.drop(['Composition', 'similarities'], axis=1,
+                                    errors='ignore').to_numpy()
+            self._X_scaled = False
+
+        self._pca = False
+        if pca:
+            pca = PCA(n_components=pca)
+            self._X = pca.fit_transform(self._X)
+            self._pca = True
+
+        self._metrics_allowed = ['dice', 'correlation', 'cityblock', 'cosine',
+                                 'mahalanobis', 'euclidean', 'tanimoto']
+        self.similarities = {}
+        self._rank = {}
+        self._counts = {}
+        self.best_metric = None
+
+    @property
+    def curated_ids(self):
+        return self._curated_ids
+
+    @property
+    def curated_ilocs(self):
+        return [self._df.index.get_loc(i) for i in self.curated_ids]
+
+    @property
+    def metrics_allowed(self):
+        return self._metrics_allowed
+
+    def _validate_metric(self, metric):
+        return metric in self._metrics_allowed
+
+    def compute_metric(self, metric='euclidean'):
+        """
+        Computes the similarity with the given metric. Results are stored in similarities attribute.
+        Args:
+            metric (str): one of the allowed similarity metrics.
+        """
+        if not self._validate_metric(metric):
+            raise ValueError("not a valid metric.")
+
+        if metric == 'mahalanobis':
+            self.similarities['mahalanobis'] = self.mahalanobis()
+
+        elif metric == 'tanimoto':
+            self.similarities['tanimoto'] = self.tanimoto_dice(metric)
+
+        elif metric == 'dice':
+            self.similarities['dice'] = self.tanimoto_dice(metric)
+        else:
+            distances = cdist(self._X, self._X[self.curated_ilocs], metric=metric)
+            self.similarities[metric] = (1. + distances) ** -1
+
+    def get_ranked_ids(self, metric='euclidean'):
+        if metric not in self.similarities:
+            self.compute_metric(metric)
+        return self._df.iloc[np.argsort(-np.mean(self.similarities[metric], axis=1))].index.to_list()
+
+    def get_df_of_similar(self, metric='euclidean', remove_curated=True,
+                          ignore_elements=None, include_elements=None, diversify=0):
+        _result = self._df.loc[self.get_ranked_ids(metric)]
+        if remove_curated:
+            _result = _result.drop(self.curated_ids)
+
+        if ignore_elements or include_elements:
+            ignore_compound_labels = []
+            ignore_elements = set(ignore_elements) if ignore_elements else set([-1])
+            include_elements = set(include_elements) if include_elements else set()
+            for r in _result.iterrows():
+                c = set(Composition(r[1]['Composition']).as_dict().keys())
+                if ignore_elements.issubset(c):
+                    ignore_compound_labels.append(r[0])
+                    continue
+                if not include_elements.issubset(c):
+                    ignore_compound_labels.append(r[0])
+            _result = _result.drop(ignore_compound_labels)
+
+        if diversify:
+            diverse_quant_ids = diverse_quant(_result.index.tolist()[:diversify * 500], target_length=diversify,
+                                              df=_result.drop('similarities', axis=1)[:diversify * 500])
+            _result = _result.loc[diverse_quant_ids]
+        return _result
+
+    def mahalanobis(self, pca_components=50, pca_sub_metric='euclidean', pca_mah_scale=True):
+        pca = PCA(n_components=pca_components)
+        X = pca.fit_transform(self._X)
+        if pca_mah_scale:
+            scaler = StandardScaler()
+            X = scaler.fit_transform(X)
+        distances = cdist(X, X[self.curated_ilocs], metric=pca_sub_metric)
+        similarities = (1. + distances) ** -1
+        return similarities
+
+    def tanimoto_dice(self, mode='tanimoto'):
+        similarities = []
+        for x in self._X:
+            _similarities = []
+            for j in self._X[self.curated_ilocs]:
+                _similarities.append(self._tanimoto_dice(x, j, mode=mode))
+            similarities.append(_similarities)
+        return np.array(similarities)
+
+    @staticmethod
+    def _tanimoto_dice(A, B, mode='tanimoto'):
+        dot = np.dot(A, B)
+        if mode == 'tanimoto':
+            return dot / (np.sum(A ** 2) + np.sum(B ** 2) - dot)
+        elif mode == 'dice':
+            return 2 * dot / (np.sum(A ** 2) + np.sum(B ** 2))
+        else:
+            raise ValueError("no such mode")
+
+    def _get_metric_ranks(self, n_splits=5, random_state=42, repeats=1):
+        ranks = dict([(m, []) for m in self._metrics_allowed])
+        print('iterations ', repeats * n_splits * len(self._metrics_allowed), ':')
+        for _ in range(repeats):
+            kf = KFold(n_splits=n_splits, shuffle=True, random_state=random_state * _)
+            for test_index, train_index in kf.split(self.curated_ids):
+                fn = FunctionalSimilarity(self._df, self.curated_ids[train_index], scale=self._X_scaled)
+                for metric in self._metrics_allowed:
+                    print('.', end='')
+                    ranked_ids = fn.get_ranked_ids(metric)
+                    for i in self.curated_ids[test_index]:
+                        ranks[metric].append(ranked_ids.index(i))
+        self._ranks = ranks
+        return self._ranks
+
+    def autofind_best_metric(self, n_splits=5, random_state=42, repeats=1, stop=10000, num=1001):
+        """
+        Method to find the best similarity metric via cross-validation.
+        """
+        self._get_metric_ranks(n_splits, random_state, repeats)
+        self._top = np.linspace(0, stop, num, dtype=int)
+        self._counts = {}
+        for metric in self._ranks:
+            c = []
+            for i in self._top[1:]:
+                p = sum(np.array(self._ranks[metric]) < i) / len(self._ranks[metric]) * 100
+                c.append(p)
+            self._counts[metric] = c
+        self._areas = {}
+        for metric in self._counts:
+            d = np.array([0] + self._counts[metric])
+            self._areas[metric] = np.sum((d[:-1] + d[1:]) * (self._top[1:] - self._top[:-1]) / 2.)
+        self.best_metirc = sorted(list(self._areas.items()), key=lambda x: x[1], reverse=True)[0][0]
+        return self.best_metirc
+
+    def plot_auto_ranks(self):
+        """
+        Plots the CV rankings for auto finding best metric.
+        """
+        if not self._counts:
+            raise ValueError("Need to run autofind_best_metric.")
+        plt.figure(figsize=(5, 4))
+        for metric in self._counts:
+            plt.plot(self._top, [0] + self._counts[metric], '-', label=metric, linewidth=2, alpha=1)
+        plt.ylabel('% recovered', fontsize=12)
+        plt.xlabel('top N among 600k entries', fontsize=12)
+        plt.title('Battery electrode discovery')
+        plt.minorticks_on()
+        plt.legend(frameon=False)
+        plt.ylim(0, )
+        plt.xlim(0, )
+        return plt
