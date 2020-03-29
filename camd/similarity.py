@@ -3,6 +3,7 @@ import matplotlib.pyplot as plt
 from sklearn.preprocessing import StandardScaler
 from sklearn.decomposition import PCA
 from sklearn.model_selection import KFold
+from sklearn.svm import OneClassSVM
 from scipy.spatial.distance import cdist
 from pymatgen import Composition
 from camd.agent.agents import diverse_quant
@@ -54,9 +55,9 @@ class FunctionalSimilarity:
 
         self._pca = False
         if pca:
-            pca = PCA(n_components=pca)
-            self._X = pca.fit_transform(self._X)
-            self._pca = True
+            _pca = PCA(n_components=pca)
+            self._X = _pca.fit_transform(self._X)
+            self._pca = pca
 
         self._metrics_allowed = [
             "dice",
@@ -66,6 +67,7 @@ class FunctionalSimilarity:
             "mahalanobis",
             "euclidean",
             "tanimoto",
+            "svm",
         ]
         self.similarities = {}
         self._rank = {}
@@ -104,6 +106,9 @@ class FunctionalSimilarity:
 
         elif metric == "dice":
             self.similarities["dice"] = self.tanimoto_dice(metric)
+
+        elif metric == "svm":
+            self.similarities["svm"] = self.svm()
         else:
             distances = cdist(self._X, self._X[self.curated_ilocs], metric=metric)
             self.similarities[metric] = (1.0 + distances) ** -1
@@ -197,6 +202,11 @@ class FunctionalSimilarity:
         else:
             raise ValueError("no such mode")
 
+    def svm(self):
+        clf = OneClassSVM(gamma="auto").fit(self._X[self.curated_ilocs])
+        scores = clf.score_samples(self._X)
+        return np.vstack((scores, scores)).T
+
     def _get_metric_ranks(self, n_splits=5, random_state=42, repeats=1):
         ranks = dict([(m, []) for m in self._metrics_allowed])
         print("iterations ", repeats * n_splits * len(self._metrics_allowed), ":")
@@ -204,7 +214,10 @@ class FunctionalSimilarity:
             kf = KFold(n_splits=n_splits, shuffle=True, random_state=random_state * _)
             for test_index, train_index in kf.split(self.curated_ids):
                 fn = FunctionalSimilarity(
-                    self._df, self.curated_ids[train_index], scale=self._X_scaled
+                    self._df,
+                    self.curated_ids[train_index],
+                    scale=self._X_scaled,
+                    pca=self._pca,
                 )
                 for metric in self._metrics_allowed:
                     print(".", end="")
