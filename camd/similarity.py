@@ -89,7 +89,7 @@ class FunctionalSimilarity:
     def _validate_metric(self, metric):
         return metric in self._metrics_allowed
 
-    def compute_metric(self, metric="euclidean"):
+    def compute_metric(self, metric="euclidean", metric_params=None):
         """
         Computes the similarity with the given metric. Results are stored in similarities attribute.
         Args:
@@ -108,12 +108,16 @@ class FunctionalSimilarity:
             self.similarities["dice"] = self.tanimoto_dice(metric)
 
         elif metric == "svm":
-            self.similarities["svm"] = self.svm()
+            params = {}
+            if metric_params:
+                if 'svm' in metric_params:
+                    params = metric_params['svm']
+            self.similarities["svm"] = self.svm(**params)
         else:
             distances = cdist(self._X, self._X[self.curated_ilocs], metric=metric)
             self.similarities[metric] = (1.0 + distances) ** -1
 
-    def get_ranked_ids(self, metric="euclidean"):
+    def get_ranked_ids(self, metric="euclidean", metric_params=None):
         """
         Args:
             metric (str): one of the allowed similarity metrics
@@ -121,7 +125,7 @@ class FunctionalSimilarity:
             A ranked list of labels corresponding from original material df provided.
         """
         if metric not in self.similarities:
-            self.compute_metric(metric)
+            self.compute_metric(metric, metric_params)
         return self._df.iloc[
             np.argsort(-np.mean(self.similarities[metric], axis=1))
         ].index.to_list()
@@ -166,7 +170,9 @@ class FunctionalSimilarity:
             diverse_quant_ids = diverse_quant(
                 _result.index.tolist()[: diversify * 500],
                 target_length=diversify,
-                df=_result.drop("similarities", axis=1)[: diversify * 500],
+                df=_result.drop("similarities", axis=1, errors="ignore")[
+                    : diversify * 500
+                ],
             )
             _result = _result.loc[diverse_quant_ids]
         return _result
@@ -175,7 +181,7 @@ class FunctionalSimilarity:
         self, pca_components=50, pca_sub_metric="euclidean", pca_mah_scale=True
     ):
         if self._pca:
-            pca_components = min(pca_components,self._pca)
+            pca_components = min(pca_components, self._pca)
         pca = PCA(n_components=pca_components)
         X = pca.fit_transform(self._X)
         if pca_mah_scale:
@@ -204,12 +210,18 @@ class FunctionalSimilarity:
         else:
             raise ValueError("no such mode")
 
-    def svm(self):
-        clf = OneClassSVM(gamma="auto").fit(self._X[self.curated_ilocs])
+    def svm(self, **kwargs):
+        if kwargs:
+            kernel = kwargs.get("kernel", "rbf")
+        else:
+            kernel = "rbf"
+        clf = OneClassSVM(gamma="scale", kernel=kernel).fit(self._X[self.curated_ilocs])
         scores = clf.score_samples(self._X)
         return np.vstack((scores, scores)).T
 
-    def _get_metric_ranks(self, n_splits=5, random_state=42, repeats=1, metrics=None):
+    def _get_metric_ranks(
+        self, n_splits=5, random_state=42, repeats=1, metrics=None, metric_params=None
+    ):
         if metrics:
             if not np.alltrue([self._validate_metric(i) for i in metrics]):
                 raise ValueError("invalid metric found")
@@ -229,14 +241,21 @@ class FunctionalSimilarity:
                 )
                 for metric in metrics:
                     print(".", end="")
-                    ranked_ids = fn.get_ranked_ids(metric)
+                    ranked_ids = fn.get_ranked_ids(metric, metric_params)
                     for i in self.curated_ids[test_index]:
                         ranks[metric].append(ranked_ids.index(i))
         self._ranks = ranks
         return self._ranks
 
     def autofind_best_metric(
-        self, n_splits=5, random_state=42, repeats=1, stop=10000, num=1001, metrics=None
+        self,
+        n_splits=5,
+        random_state=42,
+        repeats=1,
+        stop=10000,
+        num=1001,
+        metrics=None,
+        metric_params=None,
     ):
         """
         Method to find the best similarity metric via cross-validation.
@@ -248,7 +267,7 @@ class FunctionalSimilarity:
             num (int): number of points considered in ranking scan for AUC calculation
             metrics (list): similarity metrics to consider. defaults to None, which will use all allowed metrics.
         """
-        self._get_metric_ranks(n_splits, random_state, repeats, metrics)
+        self._get_metric_ranks(n_splits, random_state, repeats, metrics, metric_params)
         self._top = np.linspace(0, stop, num, dtype=int)
         self._counts = {}
 
