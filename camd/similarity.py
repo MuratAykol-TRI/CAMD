@@ -110,8 +110,8 @@ class FunctionalSimilarity:
         elif metric == "svm":
             params = {}
             if metric_params:
-                if 'svm' in metric_params:
-                    params = metric_params['svm']
+                if "svm" in metric_params:
+                    params = metric_params["svm"]
             self.similarities["svm"] = self.svm(**params)
         else:
             distances = cdist(self._X, self._X[self.curated_ilocs], metric=metric)
