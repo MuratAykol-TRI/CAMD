@@ -207,9 +207,15 @@ class FunctionalSimilarity:
         scores = clf.score_samples(self._X)
         return np.vstack((scores, scores)).T
 
-    def _get_metric_ranks(self, n_splits=5, random_state=42, repeats=1):
-        ranks = dict([(m, []) for m in self._metrics_allowed])
-        print("iterations ", repeats * n_splits * len(self._metrics_allowed), ":")
+    def _get_metric_ranks(self, n_splits=5, random_state=42, repeats=1, metrics=None):
+        if metrics:
+            if not np.alltrue([self._validate_metric(i) for i in metrics]):
+                raise ValueError("invalid metric found")
+        else:
+            metrics = self._metrics_allowed
+        ranks = dict([(m, []) for m in metrics])
+
+        print("iterations ", repeats * n_splits * len(metrics), ":")
         for _ in range(repeats):
             kf = KFold(n_splits=n_splits, shuffle=True, random_state=random_state * _)
             for test_index, train_index in kf.split(self.curated_ids):
@@ -219,7 +225,7 @@ class FunctionalSimilarity:
                     scale=self._X_scaled,
                     pca=self._pca,
                 )
-                for metric in self._metrics_allowed:
+                for metric in metrics:
                     print(".", end="")
                     ranked_ids = fn.get_ranked_ids(metric)
                     for i in self.curated_ids[test_index]:
@@ -228,7 +234,7 @@ class FunctionalSimilarity:
         return self._ranks
 
     def autofind_best_metric(
-        self, n_splits=5, random_state=42, repeats=1, stop=10000, num=1001
+        self, n_splits=5, random_state=42, repeats=1, stop=10000, num=1001, metrics=None
     ):
         """
         Method to find the best similarity metric via cross-validation.
@@ -238,10 +244,12 @@ class FunctionalSimilarity:
             repeats (int): repeats the random k-fold this many times
             stop (int): upper limit for ranking scan for AUC calculation
             num (int): number of points considered in ranking scan for AUC calculation
+            metrics (list): similarity metrics to consider. defaults to None, which will use all allowed metrics.
         """
-        self._get_metric_ranks(n_splits, random_state, repeats)
+        self._get_metric_ranks(n_splits, random_state, repeats, metrics)
         self._top = np.linspace(0, stop, num, dtype=int)
         self._counts = {}
+
         for metric in self._ranks:
             c = []
             for i in self._top[1:]:
