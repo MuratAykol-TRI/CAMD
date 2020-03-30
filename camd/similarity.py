@@ -174,6 +174,8 @@ class FunctionalSimilarity:
     def mahalanobis(
         self, pca_components=50, pca_sub_metric="euclidean", pca_mah_scale=True
     ):
+        if self._pca:
+            pca_components = min(pca_components,self._pca)
         pca = PCA(n_components=pca_components)
         X = pca.fit_transform(self._X)
         if pca_mah_scale:
