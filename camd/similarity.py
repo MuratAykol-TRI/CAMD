@@ -309,8 +309,7 @@ class FunctionalSimilarity:
                 alpha=1,
             )
         plt.ylabel("% recovered", fontsize=12)
-        plt.xlabel("top N among 600k entries", fontsize=12)
-        plt.title("Battery electrode discovery")
+        plt.xlabel("top N in ranked list", fontsize=12)
         plt.minorticks_on()
         plt.legend(frameon=False)
         plt.ylim(0,)
