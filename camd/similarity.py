@@ -1,16 +1,17 @@
 import numpy as np
 import matplotlib.pyplot as plt
 from sklearn.preprocessing import StandardScaler
-from sklearn.decomposition import PCA
+from sklearn.decomposition import PCA, KernelPCA
 from sklearn.model_selection import KFold
 from sklearn.svm import OneClassSVM
 from scipy.spatial.distance import cdist
 from pymatgen import Composition
 from camd.agent.agents import diverse_quant
+from joblib import Parallel, delayed
 
 
 class FunctionalSimilarity:
-    def __init__(self, df, curated_ids, scale=True, pca=None):
+    def __init__(self, df, curated_ids, scale=True, pca=None, pca_kernel=None):
         """
         FunctionalSimilarity incorporates a "similarity" based mining approach for the
         difficult problem of finding materials that possess a certain functionality
@@ -55,8 +56,11 @@ class FunctionalSimilarity:
 
         self._pca = False
         if pca:
-            _pca = PCA(n_components=pca)
-            self._X = _pca.fit_transform(self._X)
+            if pca_kernel:
+                self._X = kernelpca(self._X, n_components=pca, kernel=pca_kernel)
+            else:
+                _pca = PCA(n_components=pca)
+                self._X = _pca.fit_transform(self._X)
             self._pca = pca
 
         self._metrics_allowed = [
@@ -315,3 +319,15 @@ class FunctionalSimilarity:
         plt.ylim(0,)
         plt.xlim(0,)
         return plt
+
+
+def kernelpca(X, n_components=None, kernel=None):
+    _pca = KernelPCA(n_components=n_components, kernel=kernel)
+    if X.shape[0] > 10000:
+        _pca.fit(X[np.random.choice(X.shape[0], size=10000, replace=False)])
+        X = Parallel(n_jobs=-1,verbose=1)(delayed(_pca.transform)(i.reshape(1,-1)) for i in X)
+        X = np.array(X)
+        X = X.reshape(X.shape[0],X.shape[2])
+    else:
+        X = _pca.fit_transform(X)
+    return X
