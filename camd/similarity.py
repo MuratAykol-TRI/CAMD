@@ -58,9 +58,11 @@ class FunctionalSimilarity:
         if pca:
             if pca_kernel:
                 self._X = kernelpca(self._X, n_components=pca, kernel=pca_kernel)
+                self._pca_kernel = pca_kernel
             else:
                 _pca = PCA(n_components=pca)
                 self._X = _pca.fit_transform(self._X)
+                self._pca_kernel = None
             self._pca = pca
 
         self._metrics_allowed = [
@@ -77,6 +79,14 @@ class FunctionalSimilarity:
         self._rank = {}
         self._counts = {}
         self.best_metric = None
+        self.use_features = None
+
+    @property
+    def X(self):
+        if self.use_features:
+            return self._X[:, self.use_features]
+        else:
+            return self._X
 
     @property
     def curated_ids(self):
@@ -118,7 +128,7 @@ class FunctionalSimilarity:
                     params = metric_params["svm"]
             self.similarities["svm"] = self.svm(**params)
         else:
-            distances = cdist(self._X, self._X[self.curated_ilocs], metric=metric)
+            distances = cdist(self.X, self.X[self.curated_ilocs], metric=metric)
             self.similarities[metric] = (1.0 + distances) ** -1
 
     def get_ranked_ids(self, metric="euclidean", metric_params=None):
@@ -185,9 +195,9 @@ class FunctionalSimilarity:
         self, pca_components=50, pca_sub_metric="euclidean", pca_mah_scale=True
     ):
         if self._pca:
-            pca_components = min(pca_components, self._pca)
+            pca_components = min(pca_components, self._pca, self.X.shape[1])
         pca = PCA(n_components=pca_components)
-        X = pca.fit_transform(self._X)
+        X = pca.fit_transform(self.X)
         if pca_mah_scale:
             scaler = StandardScaler()
             X = scaler.fit_transform(X)
@@ -197,9 +207,9 @@ class FunctionalSimilarity:
 
     def tanimoto_dice(self, mode="tanimoto"):
         similarities = []
-        for x in self._X:
+        for x in self.X:
             _similarities = []
-            for j in self._X[self.curated_ilocs]:
+            for j in self.X[self.curated_ilocs]:
                 _similarities.append(self._tanimoto_dice(x, j, mode=mode))
             similarities.append(_similarities)
         return np.array(similarities)
@@ -219,8 +229,8 @@ class FunctionalSimilarity:
             kernel = kwargs.get("kernel", "rbf")
         else:
             kernel = "rbf"
-        clf = OneClassSVM(gamma="scale", kernel=kernel).fit(self._X[self.curated_ilocs])
-        scores = clf.score_samples(self._X)
+        clf = OneClassSVM(gamma="scale", kernel=kernel).fit(self.X[self.curated_ilocs])
+        scores = clf.score_samples(self.X)
         return np.vstack((scores, scores)).T
 
     def _get_metric_ranks(
@@ -238,11 +248,12 @@ class FunctionalSimilarity:
             kf = KFold(n_splits=n_splits, shuffle=True, random_state=random_state * _)
             for test_index, train_index in kf.split(self.curated_ids):
                 fn = FunctionalSimilarity(
-                    self._df,
-                    self.curated_ids[train_index],
-                    scale=self._X_scaled,
-                    pca=self._pca,
+                    self._df, self.curated_ids[train_index], scale=self._X_scaled
                 )
+                fn._X = self._X
+                fn._pca = self._pca
+                fn.use_features = self.use_features
+
                 for metric in metrics:
                     print(".", end="")
                     ranked_ids = fn.get_ranked_ids(metric, metric_params)
@@ -296,15 +307,15 @@ class FunctionalSimilarity:
         )[0][0]
         return self.best_metirc
 
-    def plot_auto_ranks(self):
+    def plot_auto_ranks(self, plt_obj=None):
         """
         Plots the CV rankings for auto finding best metric.
         """
         if not self._counts:
             raise ValueError("Need to run autofind_best_metric.")
-        plt.figure(figsize=(5, 4))
+        _plt = plt_obj if plt_obj else plt
         for metric in self._counts:
-            plt.plot(
+            _plt.plot(
                 self._top,
                 [0] + self._counts[metric],
                 "-",
@@ -312,22 +323,24 @@ class FunctionalSimilarity:
                 linewidth=2,
                 alpha=1,
             )
-        plt.ylabel("% recovered", fontsize=12)
-        plt.xlabel("top N in ranked list", fontsize=12)
-        plt.minorticks_on()
-        plt.legend(frameon=False)
-        plt.ylim(0,)
-        plt.xlim(0,)
-        return plt
+        _plt.ylabel("% recovered", fontsize=12)
+        _plt.xlabel("top N in ranked list", fontsize=12)
+        _plt.minorticks_on()
+        _plt.legend(frameon=False)
+        _plt.ylim(0,)
+        _plt.xlim(0,)
+        return _plt
 
 
 def kernelpca(X, n_components=None, kernel=None):
     _pca = KernelPCA(n_components=n_components, kernel=kernel)
     if X.shape[0] > 10000:
         _pca.fit(X[np.random.choice(X.shape[0], size=10000, replace=False)])
-        X = Parallel(n_jobs=-1,verbose=1)(delayed(_pca.transform)(i.reshape(1,-1)) for i in X)
+        X = Parallel(n_jobs=-1, verbose=1)(
+            delayed(_pca.transform)(i.reshape(1, -1)) for i in X
+        )
         X = np.array(X)
-        X = X.reshape(X.shape[0],X.shape[2])
+        X = X.reshape(X.shape[0], X.shape[2])
     else:
         X = _pca.fit_transform(X)
     return X
