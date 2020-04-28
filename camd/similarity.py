@@ -273,7 +273,8 @@ class FunctionalSimilarity:
         metric_params=None,
     ):
         """
-        Method to find the best similarity metric via cross-validation.
+        Method to find the best similarity metric via cross-validation over area under
+        cumulative recall curves.
         Args:
             n_splits (int): number of splits in k-fold
             random_state (int): seed for random state
@@ -309,7 +310,7 @@ class FunctionalSimilarity:
 
     def plot_auto_ranks(self, plt_obj=None):
         """
-        Plots the CV rankings for auto finding best metric.
+        Plots the CV-based cumulative recalls for auto finding best metric.
         """
         if not self._counts:
             raise ValueError("Need to run autofind_best_metric.")
@@ -323,8 +324,8 @@ class FunctionalSimilarity:
                 linewidth=2,
                 alpha=1,
             )
-        _plt.ylabel("% recovered", fontsize=12)
-        _plt.xlabel("top N in ranked list", fontsize=12)
+        _plt.ylabel("Cumulative recall (%)", fontsize=12)
+        _plt.xlabel("Number of tests", fontsize=12)
         _plt.minorticks_on()
         _plt.legend(frameon=False)
         _plt.ylim(0,)
