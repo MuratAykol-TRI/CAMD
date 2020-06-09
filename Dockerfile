@@ -7,24 +7,20 @@ ENV PATH="/opt/conda/bin/:$PATH"
 RUN mkdir -p /home/camd && \
     conda create -n camd python=3.6 && \
     apt-get update && \
-    apt-get install -y gcc g++ default-libmysqlclient-dev libpq-dev postgresql
+    apt-get -y install gcc g++
 
 WORKDIR /home/camd
 
 # Create camd env
 ENV PATH="/opt/conda/envs/camd/bin:$PATH"
 
-COPY . /home/camd
+COPY setup.py requirements.txt /home/camd/
 
 # Install package
 RUN source /opt/conda/bin/activate camd && \
-    pip install gpflow==1.5.0 tensorflow==1.15.0 && \
-    cd bulk_enumerator && python setup.py install && cd .. && \
-    cd protosearch && python setup.py install && cd .. && \
-    python setup.py develop && \
-    pip install nose && \
-    pip install coverage && \
-    pip install pylint && \
-    chmod +x dockertest.sh
+    pip install numpy==1.18.3 && \
+    pip install -r requirements.txt && \
+    pip install pytest pytest-cov coveralls
 
-CMD ["./dockertest.sh"]
+COPY camd /home/camd/camd
+RUN python setup.py develop
