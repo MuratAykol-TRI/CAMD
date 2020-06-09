@@ -6,7 +6,7 @@ from sklearn.model_selection import KFold
 from sklearn.svm import OneClassSVM
 from scipy.spatial.distance import cdist
 from pymatgen import Composition
-from camd.agent.agents import diverse_quant
+from camd.agent.stability import diverse_quant
 from joblib import Parallel, delayed
 
 
